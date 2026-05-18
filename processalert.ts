@@ -4,9 +4,9 @@ import { logger } from "./logger.ts";
 
 const MAX_ALERT_HISTORY_SIZE = 100;
 const MAX_ALERT_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-const DEVICE_FOUND_TIMER_MS = 5000;     // 5 seconds before sending "found" alert
-const DEVICE_LOST_TIMER_MS = 30000;    // 30 seconds before sending "lost" alert
-const TIMER_STATUS_INTERVAL_MS = 60000; // Log timer status every 60 seconds
+const DEVICE_FOUND_COOLDOWN_MS = 30 * 60 * 1000;     // 30 mins between consecutive found alerts
+const DEVICE_LOST_COOLDOWN_MS = 30 * 60 * 1000;    // 30 mins between consecutive lost alerts
+const STATUS_REPORT_INTERVAL_MS = 5 * 60 * 1000 ; // Log device status every 5 mins
 
 interface AlertHistoryEntry {
   timestampMs: number;
@@ -20,9 +20,9 @@ interface DeviceState {
   mac: string;
   message: string;
   isFound: boolean;
-  foundTimerId?: NodeJS.Timeout;
-  lostTimerId?: NodeJS.Timeout;
   lastChannel?: string;
+  lastFoundEmailTimeMs: number;
+  lastLostEmailTimeMs: number;
 }
 
 interface KismetAlert {
@@ -36,46 +36,44 @@ let alertHistory: AlertHistoryEntry[] = [];
 const deviceStates = new Map<string, DeviceState>();
 let timerStatusInterval: NodeJS.Timeout | undefined;
 
-function logTimerStatus(): void {
-  const activeTimers = Array.from(deviceStates.values()).map((state) => ({
+function logDeviceStatus(): void {
+  const deviceStatus = Array.from(deviceStates.values()).map((state) => ({
     mac: state.mac,
     message: state.message,
     isFound: state.isFound,
-    hasPendingFoundTimer: !!state.foundTimerId,
-    hasPendingLostTimer: !!state.lostTimerId,
+    lastFoundEmailTime: state.lastFoundEmailTimeMs > 0 ? new Date(state.lastFoundEmailTimeMs).toISOString() : "never",
+    lastLostEmailTime: state.lastLostEmailTimeMs > 0 ? new Date(state.lastLostEmailTimeMs).toISOString() : "never",
     lastChannel: state.lastChannel ?? "unknown",
   }));
 
-  logger.info("Timer status summary", {
+  logger.info("Device status summary", {
     totalDevices: deviceStates.size,
-    devicesWithFoundTimer: activeTimers.filter((t) => t.hasPendingFoundTimer).length,
-    devicesWithLostTimer: activeTimers.filter((t) => t.hasPendingLostTimer).length,
-    devices: activeTimers,
+    devices: deviceStatus,
   });
 }
 
-export function startTimerStatusReporting(): void {
+export function startDeviceStatusReporting(): void {
   if (timerStatusInterval) return;
 
   timerStatusInterval = setInterval(() => {
-    logTimerStatus();
-  }, TIMER_STATUS_INTERVAL_MS);
+    logDeviceStatus();
+  }, STATUS_REPORT_INTERVAL_MS);
 
-  logger.info("Started timer status reporting", {
-    intervalMs: TIMER_STATUS_INTERVAL_MS,
+  logger.info("Started device status reporting", {
+    intervalMs: STATUS_REPORT_INTERVAL_MS,
   });
 }
 
-export function stopTimerStatusReporting(): void {
+export function stopDeviceStatusReporting(): void {
   if (timerStatusInterval) {
     clearInterval(timerStatusInterval);
     timerStatusInterval = undefined;
-    logger.info("Stopped timer status reporting");
+    logger.info("Stopped device status reporting");
   }
 }
 
-export function logCurrentTimerStatus(): void {
-  logTimerStatus();
+export function logCurrentDeviceStatus(): void {
+  logDeviceStatus();
 }
 
 function trimAlertHistory(): void {
@@ -106,17 +104,19 @@ function getOrCreateDeviceState(
       mac,
       message,
       isFound: false,
+      lastFoundEmailTimeMs: 0,
+      lastLostEmailTimeMs: 0,
     });
   }
   return deviceStates.get(mac)!;
 }
 
-function getFoundTimer(mapping: MacMessageMapping): number {
-  return mapping.foundTimerMs ?? DEVICE_FOUND_TIMER_MS;
+function getFoundCooldown(mapping: MacMessageMapping): number {
+  return mapping.foundTimerMs ?? DEVICE_FOUND_COOLDOWN_MS;
 }
 
-function getLostTimer(mapping: MacMessageMapping): number {
-  return mapping.lostTimerMs ?? DEVICE_LOST_TIMER_MS;
+function getLostCooldown(mapping: MacMessageMapping): number {
+  return mapping.lostTimerMs ?? DEVICE_LOST_COOLDOWN_MS;
 }
 
 async function sendFoundAlert(state: DeviceState, channel: string): Promise<void> {
@@ -143,9 +143,13 @@ async function sendFoundAlert(state: DeviceState, channel: string): Promise<void
     `Alert: ${state.message} on channel ${channel}`,
     formatAlertHistory()
   );
+
+  state.lastFoundEmailTimeMs = timestampMs;
 }
 
 async function sendLostAlert(state: DeviceState): Promise<void> {
+  const timestampMs = Date.now();
+
   logger.info("Sending device lost alert", {
     mac: state.mac,
     message: state.message,
@@ -156,6 +160,8 @@ async function sendLostAlert(state: DeviceState): Promise<void> {
     `Clear: ${state.message}`,
     formatAlertHistory()
   );
+
+  state.lastLostEmailTimeMs = timestampMs;
 }
 
 export async function processAlert(json: KismetAlert): Promise<void> {
@@ -190,8 +196,8 @@ export async function processAlert(json: KismetAlert): Promise<void> {
         macMessageMapping.message
       );
 
-      const foundTimerMs = getFoundTimer(macMessageMapping);
-      const lostTimerMs = getLostTimer(macMessageMapping);
+      const foundCooldownMs = getFoundCooldown(macMessageMapping);
+      const lostCooldownMs = getLostCooldown(macMessageMapping);
 
       if (alertString.includes("hasn't been seen")) {
         // Device lost
@@ -200,35 +206,28 @@ export async function processAlert(json: KismetAlert): Promise<void> {
           message: state.message,
         });
 
-        // Cancel found timer if active
-        if (state.foundTimerId) {
-          clearTimeout(state.foundTimerId);
-          state.foundTimerId = undefined;
-          logger.debug("Cancelled pending found alert", {
-            mac: state.mac,
-            message: state.message,
-          });
-        }
-
         state.isFound = false;
 
-        // Start lost timer if not already pending
-        if (!state.lostTimerId) {
-          state.lostTimerId = setTimeout(async () => {
-            state.lostTimerId = undefined;
-            await sendLostAlert(state);
-          }, lostTimerMs);
+        // Check if cooldown has elapsed since last lost email
+        const timeSinceLastLostEmail = Date.now() - state.lastLostEmailTimeMs;
+        const canSendLostAlert = timeSinceLastLostEmail >= lostCooldownMs;
 
-          logger.info("Started lost timer", {
+        if (canSendLostAlert) {
+          await sendLostAlert(state);
+
+          logger.info("Sent lost alert", {
             mac: state.mac,
             message: state.message,
-            delayMs: lostTimerMs,
-            willFireAt: new Date(Date.now() + lostTimerMs).toISOString(),
           });
         } else {
-          logger.debug("Lost timer already pending", {
+          logger.debug("Lost alert on cooldown", {
             mac: state.mac,
             message: state.message,
+            timeSinceLastEmail: timeSinceLastLostEmail,
+            cooldownPeriod: lostCooldownMs,
+            willBeEligibleAt: new Date(
+              state.lastLostEmailTimeMs + lostCooldownMs
+            ).toISOString(),
           });
         }
       } else if (alertString.includes("has been found")) {
@@ -239,38 +238,31 @@ export async function processAlert(json: KismetAlert): Promise<void> {
           channel,
         });
 
-        // Cancel lost timer if active
-        if (state.lostTimerId) {
-          clearTimeout(state.lostTimerId);
-          state.lostTimerId = undefined;
-          logger.debug("Cancelled pending lost alert", {
-            mac: state.mac,
-            message: state.message,
-          });
-        }
-
         state.isFound = true;
         state.lastChannel = channel;
 
-        // Start found timer if not already pending
-        if (!state.foundTimerId) {
-          state.foundTimerId = setTimeout(async () => {
-            state.foundTimerId = undefined;
-            await sendFoundAlert(state, channel);
-          }, foundTimerMs);
+        // Check if cooldown has elapsed since last found email
+        const timeSinceLastFoundEmail = Date.now() - state.lastFoundEmailTimeMs;
+        const canSendFoundAlert = timeSinceLastFoundEmail >= foundCooldownMs;
 
-          logger.info("Started found timer", {
+        if (canSendFoundAlert) {
+          await sendFoundAlert(state, channel);
+
+          logger.info("Sent found alert", {
             mac: state.mac,
             message: state.message,
             channel,
-            delayMs: foundTimerMs,
-            willFireAt: new Date(Date.now() + foundTimerMs).toISOString(),
           });
         } else {
-          logger.debug("Found timer already pending", {
+          logger.debug("Found alert on cooldown", {
             mac: state.mac,
             message: state.message,
             channel,
+            timeSinceLastEmail: timeSinceLastFoundEmail,
+            cooldownPeriod: foundCooldownMs,
+            willBeEligibleAt: new Date(
+              state.lastFoundEmailTimeMs + foundCooldownMs
+            ).toISOString(),
           });
         }
       }

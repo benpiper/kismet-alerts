@@ -1,5 +1,5 @@
 import { sendMailWithRetry } from "./mail.ts";
-import { processAlert, startTimerStatusReporting, stopTimerStatusReporting } from "./processalert.ts";
+import { processAlert, startDeviceStatusReporting, stopDeviceStatusReporting } from "./processalert.ts";
 import { validateConfig, type AppConfig } from "./config.ts";
 import { logger } from "./logger.ts";
 import { createWebSocketConnection } from "./websocket-manager.ts";
@@ -42,7 +42,7 @@ function handleReady(ws: WebSocket): void {
   logger.info("WebSocket connection ready, subscribing to ALERT events");
   const req = { SUBSCRIBE: "ALERT" };
   ws.send(JSON.stringify(req));
-  startTimerStatusReporting();
+  startDeviceStatusReporting();
   sendMailWithRetry({}, "Starting up", []);
 }
 
@@ -62,8 +62,8 @@ async function gracefulShutdown(): Promise<void> {
   }, 5000);
 
   try {
-    // Stop timer status reporting
-    stopTimerStatusReporting();
+    // Stop device status reporting
+    stopDeviceStatusReporting();
 
     // Close WebSocket connection
     if (wsManager) {
