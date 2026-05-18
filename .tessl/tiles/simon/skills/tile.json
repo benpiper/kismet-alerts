@@ -1,0 +1,38 @@
+{
+  "name": "simon/skills",
+  "version": "1.0.3",
+  "summary": "Auto-generated tile from GitHub (10 skills)",
+  "skills": {
+    "documentation": {
+      "path": "skills/documentation/SKILL.md"
+    },
+    "fastify-best-practices": {
+      "path": "skills/fastify/SKILL.md"
+    },
+    "init": {
+      "path": "skills/init/SKILL.md"
+    },
+    "linting-neostandard-eslint9": {
+      "path": "skills/linting-neostandard-eslint9/SKILL.md"
+    },
+    "node-best-practices": {
+      "path": "skills/node/SKILL.md"
+    },
+    "nodejs-core": {
+      "path": "skills/nodejs-core/SKILL.md"
+    },
+    "oauth": {
+      "path": "skills/oauth/SKILL.md"
+    },
+    "octocat": {
+      "path": "skills/octocat/SKILL.md"
+    },
+    "snipgrapher": {
+      "path": "skills/snipgrapher/SKILL.md"
+    },
+    "typescript-magician": {
+      "path": "skills/typescript-magician/SKILL.md"
+    }
+  },
+  "private": false
+}
