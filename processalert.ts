@@ -6,6 +6,7 @@ const MAX_ALERT_HISTORY_SIZE = 100;
 const MAX_ALERT_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEVICE_FOUND_TIMER_MS = 5000;     // 5 seconds before sending "found" alert
 const DEVICE_LOST_TIMER_MS = 30000;    // 30 seconds before sending "lost" alert
+const TIMER_STATUS_INTERVAL_MS = 60000; // Log timer status every 60 seconds
 
 interface AlertHistoryEntry {
   timestampMs: number;
@@ -33,6 +34,49 @@ interface KismetAlert {
 
 let alertHistory: AlertHistoryEntry[] = [];
 const deviceStates = new Map<string, DeviceState>();
+let timerStatusInterval: NodeJS.Timeout | undefined;
+
+function logTimerStatus(): void {
+  const activeTimers = Array.from(deviceStates.values()).map((state) => ({
+    mac: state.mac,
+    message: state.message,
+    isFound: state.isFound,
+    hasPendingFoundTimer: !!state.foundTimerId,
+    hasPendingLostTimer: !!state.lostTimerId,
+    lastChannel: state.lastChannel ?? "unknown",
+  }));
+
+  logger.info("Timer status summary", {
+    totalDevices: deviceStates.size,
+    devicesWithFoundTimer: activeTimers.filter((t) => t.hasPendingFoundTimer).length,
+    devicesWithLostTimer: activeTimers.filter((t) => t.hasPendingLostTimer).length,
+    devices: activeTimers,
+  });
+}
+
+export function startTimerStatusReporting(): void {
+  if (timerStatusInterval) return;
+
+  timerStatusInterval = setInterval(() => {
+    logTimerStatus();
+  }, TIMER_STATUS_INTERVAL_MS);
+
+  logger.info("Started timer status reporting", {
+    intervalMs: TIMER_STATUS_INTERVAL_MS,
+  });
+}
+
+export function stopTimerStatusReporting(): void {
+  if (timerStatusInterval) {
+    clearInterval(timerStatusInterval);
+    timerStatusInterval = undefined;
+    logger.info("Stopped timer status reporting");
+  }
+}
+
+export function logCurrentTimerStatus(): void {
+  logTimerStatus();
+}
 
 function trimAlertHistory(): void {
   const now = Date.now();
@@ -160,7 +204,10 @@ export async function processAlert(json: KismetAlert): Promise<void> {
         if (state.foundTimerId) {
           clearTimeout(state.foundTimerId);
           state.foundTimerId = undefined;
-          logger.debug("Cancelled pending found alert", { mac: state.mac });
+          logger.debug("Cancelled pending found alert", {
+            mac: state.mac,
+            message: state.message,
+          });
         }
 
         state.isFound = false;
@@ -172,9 +219,16 @@ export async function processAlert(json: KismetAlert): Promise<void> {
             await sendLostAlert(state);
           }, lostTimerMs);
 
-          logger.debug("Started lost timer", {
+          logger.info("Started lost timer", {
             mac: state.mac,
+            message: state.message,
             delayMs: lostTimerMs,
+            willFireAt: new Date(Date.now() + lostTimerMs).toISOString(),
+          });
+        } else {
+          logger.debug("Lost timer already pending", {
+            mac: state.mac,
+            message: state.message,
           });
         }
       } else if (alertString.includes("has been found")) {
@@ -189,7 +243,10 @@ export async function processAlert(json: KismetAlert): Promise<void> {
         if (state.lostTimerId) {
           clearTimeout(state.lostTimerId);
           state.lostTimerId = undefined;
-          logger.debug("Cancelled pending lost alert", { mac: state.mac });
+          logger.debug("Cancelled pending lost alert", {
+            mac: state.mac,
+            message: state.message,
+          });
         }
 
         state.isFound = true;
@@ -202,9 +259,18 @@ export async function processAlert(json: KismetAlert): Promise<void> {
             await sendFoundAlert(state, channel);
           }, foundTimerMs);
 
-          logger.debug("Started found timer", {
+          logger.info("Started found timer", {
             mac: state.mac,
+            message: state.message,
+            channel,
             delayMs: foundTimerMs,
+            willFireAt: new Date(Date.now() + foundTimerMs).toISOString(),
+          });
+        } else {
+          logger.debug("Found timer already pending", {
+            mac: state.mac,
+            message: state.message,
+            channel,
           });
         }
       }
