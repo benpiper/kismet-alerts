@@ -1,48 +1,51 @@
-import { sendMailWithRetry } from "./mail.js";
-import { processAlert } from "./processalert.js";
-import { validateConfig } from "./config.js";
-import { logger } from "./logger.js";
-import { createWebSocketConnection } from "./websocket-manager.js";
+import { sendMailWithRetry } from "./mail.ts";
+import { processAlert } from "./processalert.ts";
+import { validateConfig, type AppConfig } from "./config.ts";
+import { logger } from "./logger.ts";
+import { createWebSocketConnection } from "./websocket-manager.ts";
 import dotenv from "dotenv";
+import WebSocket from "ws";
 
 dotenv.config();
 
 // Validate configuration at startup
-let config;
+let config: AppConfig;
 try {
   config = validateConfig();
   logger.info("Configuration validated successfully");
 } catch (err) {
-  logger.error("Configuration validation failed", { error: err.message });
+  const error = err as Error;
+  logger.error("Configuration validation failed", { error: error.message });
   process.exit(1);
 }
 
 const wsUrl = `ws://${config.kismet.host}:${config.kismet.port}/eventbus/events.ws?user=${config.kismet.username}&password=${config.kismet.password}`;
 
-let wsManager;
+let wsManager: ReturnType<typeof createWebSocketConnection>;
 let isShuttingDown = false;
 
-function handleMessage(msg) {
+function handleMessage(msg: WebSocket.MessageEvent): void {
   try {
     logger.debug("WebSocket message received");
-    const json = JSON.parse(msg.data);
+    const json = JSON.parse(msg.data as string);
     processAlert(json);
   } catch (err) {
+    const error = err as Error;
     logger.error("Error parsing WebSocket message", {
-      error: err.message,
-      data: msg.data?.substring(0, 100), // Log first 100 chars of data
+      error: error.message,
+      data: (msg.data as string)?.substring(0, 100), // Log first 100 chars of data
     });
   }
 }
 
-function handleReady(ws) {
+function handleReady(ws: WebSocket): void {
   logger.info("WebSocket connection ready, subscribing to ALERT events");
   const req = { SUBSCRIBE: "ALERT" };
   ws.send(JSON.stringify(req));
   sendMailWithRetry({}, "Starting up", []);
 }
 
-async function gracefulShutdown() {
+async function gracefulShutdown(): Promise<void> {
   if (isShuttingDown) {
     logger.warn("Shutdown already in progress");
     return;
@@ -71,7 +74,8 @@ async function gracefulShutdown() {
     clearTimeout(forceExitTimeout);
     process.exit(0);
   } catch (err) {
-    logger.error("Error during shutdown", { error: err.message });
+    const error = err as Error;
+    logger.error("Error during shutdown", { error: error.message });
     clearTimeout(forceExitTimeout);
     process.exit(1);
   }
@@ -90,16 +94,15 @@ process.on("uncaughtException", (err) => {
   gracefulShutdown();
 });
 
-process.on("unhandledRejection", (reason, promise) => {
+process.on("unhandledRejection", (reason) => {
   logger.error("Unhandled promise rejection", {
     reason: reason instanceof Error ? reason.message : String(reason),
-    promise: String(promise),
   });
   gracefulShutdown();
 });
 
 // WebSocket fatal error handler
-process.on("websocket-fatal-error", async (err) => {
+process.on("websocket-fatal-error" as unknown as any, async (err: Error) => {
   logger.error("WebSocket fatal error - giving up", {
     error: err.message,
   });
@@ -110,8 +113,9 @@ process.on("websocket-fatal-error", async (err) => {
       ["WebSocket reconnection attempts exhausted. System shutting down."]
     );
   } catch (mailErr) {
+    const error = mailErr as Error;
     logger.error("Failed to send error notification email", {
-      error: mailErr.message,
+      error: error.message,
     });
   }
   process.exit(1);

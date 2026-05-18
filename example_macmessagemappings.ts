@@ -1,4 +1,6 @@
-export const macMessageMappings = [
+import type { MacMessageMapping } from "./macmessagemappings.ts";
+
+export const macMessageMappings: MacMessageMapping[] = [
   {
     mac: "00:00:00:00:00:00",
     message: "Suspicious device 1",

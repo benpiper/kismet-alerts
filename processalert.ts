@@ -1,13 +1,28 @@
-import { sendMailWithRetry } from "./mail.js";
-import { macMessageMappings } from "./macmessagemappings.js";
-import { logger } from "./logger.js";
+import { sendMailWithRetry } from "./mail.ts";
+import { macMessageMappings, type MacMessageMapping } from "./macmessagemappings.ts";
+import { logger } from "./logger.ts";
 
 const MAX_ALERT_HISTORY_SIZE = 100;
 const MAX_ALERT_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-var alertHistory = [];
+interface AlertHistoryEntry {
+  timestampMs: number;
+  timestamp: string;
+  mac: string;
+  message: string;
+  channel: string;
+}
 
-function trimAlertHistory() {
+interface KismetAlert {
+  ALERT?: {
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+let alertHistory: AlertHistoryEntry[] = [];
+
+function trimAlertHistory(): void {
   const now = Date.now();
 
   // Remove entries older than 24 hours
@@ -26,7 +41,7 @@ function trimAlertHistory() {
   });
 }
 
-export async function processAlert(json) {
+export async function processAlert(json: KismetAlert): Promise<void> {
   try {
     logger.info("Processing alert");
 
@@ -70,7 +85,7 @@ export async function processAlert(json) {
 
           // Create alert history entry
           const timestampMs = alertTimestamp
-            ? parseInt(alertTimestamp) * 1000
+            ? parseInt(alertTimestamp as string) * 1000
             : Date.now();
 
           alertHistory.push({
@@ -97,13 +112,14 @@ export async function processAlert(json) {
       }
     }
   } catch (err) {
+    const error = err as Error;
     logger.error("Error processing alert", {
-      error: err.message,
-      stack: err.stack,
+      error: error.message,
+      stack: error.stack,
     });
   }
 }
 
-function formatAlertHistory() {
+function formatAlertHistory(): string[] {
   return alertHistory.map((entry) => `${entry.timestamp} - ${entry.message} (CH:${entry.channel})`);
 }

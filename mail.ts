@@ -1,13 +1,20 @@
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
-import { logger } from "./logger.js";
+import { logger } from "./logger.ts";
 
 dotenv.config();
+
+interface KismetAlert {
+  ALERT?: {
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
 
 // Create a test account or replace with real credentials.
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
+  port: Number(process.env.EMAIL_PORT),
   secure: false, // true for 465, false for other ports
   requireTLS: true,
   auth: {
@@ -25,13 +32,12 @@ const RETRY_MAX_ATTEMPTS = 4;
 const RETRY_BASE_DELAY_MS = 2000;
 const RETRY_BACKOFF_MULTIPLIER = 3;
 
-export async function sendMail(json, subject, body) {
+export async function sendMail(json: KismetAlert, subject: string, body: string[]): Promise<void> {
   let alertTimestamp = new Date().toLocaleString();
-  if (Object.keys(json).includes("ALERT")) {
+  if (Object.keys(json).includes("ALERT") && json.ALERT) {
     logger.debug("Kismet alert received");
-    alertTimestamp = new Date(
-      json["ALERT"]["kismet.alert.timestamp"] * 1000
-    ).toLocaleString();
+    const timestamp = (json.ALERT["kismet.alert.timestamp"] as number) || 0;
+    alertTimestamp = new Date(timestamp * 1000).toLocaleString();
   }
   logger.debug("Alert timestamp", { timestamp: alertTimestamp });
   const bodyHTML = body.map((alert) => `<br>${alert}</br>`);
@@ -46,26 +52,26 @@ export async function sendMail(json, subject, body) {
 
     logger.info("Message sent successfully", { subject, response: info.response });
   } catch (err) {
+    const error = err as any;
     logger.error("Error sending mail", {
       subject,
-      error: err.message,
-      code: err.code,
-      command: err.command,
+      error: error.message,
+      code: error.code,
+      command: error.command,
     });
   }
 }
 
-export async function sendMailWithRetry(json, subject, body) {
+export async function sendMailWithRetry(json: KismetAlert, subject: string, body: string[]): Promise<void> {
   for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
     try {
       logger.debug(`Sending email (attempt ${attempt}/${RETRY_MAX_ATTEMPTS})`, { subject });
 
       let alertTimestamp = new Date().toLocaleString();
-      if (Object.keys(json).includes("ALERT")) {
+      if (Object.keys(json).includes("ALERT") && json.ALERT) {
         logger.debug("Kismet alert received");
-        alertTimestamp = new Date(
-          json["ALERT"]["kismet.alert.timestamp"] * 1000
-        ).toLocaleString();
+        const timestamp = (json.ALERT["kismet.alert.timestamp"] as number) || 0;
+        alertTimestamp = new Date(timestamp * 1000).toLocaleString();
       }
 
       const bodyHTML = body.map((alert) => `<br>${alert}</br>`);
@@ -84,12 +90,13 @@ export async function sendMailWithRetry(json, subject, body) {
       });
       return; // Success, exit function
     } catch (err) {
+      const error = err as any;
       logger.warn("Email send failed", {
         subject,
         attempt,
-        error: err.message,
-        code: err.code,
-        command: err.command,
+        error: error.message,
+        code: error.code,
+        command: error.command,
       });
 
       // If this was the last attempt, log error and give up
@@ -97,8 +104,8 @@ export async function sendMailWithRetry(json, subject, body) {
         logger.error("Email send failed after all retries", {
           subject,
           maxAttempts: RETRY_MAX_ATTEMPTS,
-          error: err.message,
-          code: err.code,
+          error: error.message,
+          code: error.code,
         });
         return; // Give up
       }

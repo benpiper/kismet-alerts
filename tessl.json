@@ -1,0 +1,9 @@
+{
+  "name": "kismet-alerts",
+  "mode": "vendored",
+  "dependencies": {
+    "simon/skills": {
+      "version": "1.0.3"
+    }
+  }
+}

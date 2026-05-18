@@ -1,30 +1,23 @@
-/**
- * Simple structured logging utility with ISO timestamps and log levels.
- * No external dependencies - uses only Node.js built-ins.
- *
- * Usage: logger.info('Message', {context: 'data'})
- * Log level controlled via LOG_LEVEL env var (DEBUG, INFO, WARN, ERROR)
- * Defaults to INFO
- */
-
 const LOG_LEVELS = {
   DEBUG: 0,
   INFO: 1,
   WARN: 2,
   ERROR: 3,
-};
+} as const;
 
-const currentLevel = LOG_LEVELS[process.env.LOG_LEVEL?.toUpperCase()] ?? LOG_LEVELS.INFO;
+type LogLevel = keyof typeof LOG_LEVELS;
 
-function formatTimestamp() {
+const currentLevel = LOG_LEVELS[(process.env.LOG_LEVEL?.toUpperCase() as LogLevel) ?? 'INFO'];
+
+function formatTimestamp(): string {
   return new Date().toISOString();
 }
 
-function shouldLog(level) {
+function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] >= currentLevel;
 }
 
-function format(level, message, context) {
+function format(level: LogLevel, message: string, context: Record<string, unknown>): string {
   const timestamp = formatTimestamp();
   let output = `[${timestamp}] ${level}: ${message}`;
   if (context && Object.keys(context).length > 0) {
@@ -34,25 +27,25 @@ function format(level, message, context) {
 }
 
 export const logger = {
-  debug: (message, context = {}) => {
+  debug: (message: string, context: Record<string, unknown> = {}) => {
     if (shouldLog('DEBUG')) {
       console.log(format('DEBUG', message, context));
     }
   },
 
-  info: (message, context = {}) => {
+  info: (message: string, context: Record<string, unknown> = {}) => {
     if (shouldLog('INFO')) {
       console.log(format('INFO', message, context));
     }
   },
 
-  warn: (message, context = {}) => {
+  warn: (message: string, context: Record<string, unknown> = {}) => {
     if (shouldLog('WARN')) {
       console.warn(format('WARN', message, context));
     }
   },
 
-  error: (message, context = {}) => {
+  error: (message: string, context: Record<string, unknown> = {}) => {
     if (shouldLog('ERROR')) {
       console.error(format('ERROR', message, context));
     }

@@ -1,9 +1,25 @@
-/**
- * Configuration validation module.
- * Validates all required environment variables at startup.
- */
+export interface KismetConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
 
-export function validateConfig() {
+export interface EmailConfig {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from: string;
+  to: string;
+}
+
+export interface AppConfig {
+  kismet: KismetConfig;
+  email: EmailConfig;
+}
+
+export function validateConfig(): AppConfig {
   const requiredVars = [
     'KISMET_HOST',
     'KISMET_PORT',
@@ -17,7 +33,7 @@ export function validateConfig() {
     'EMAIL_TO',
   ];
 
-  const errors = [];
+  const errors: string[] = [];
 
   // Check all required variables exist
   for (const varName of requiredVars) {
@@ -53,18 +69,18 @@ export function validateConfig() {
 
   return {
     kismet: {
-      host: process.env.KISMET_HOST,
-      port: parseInt(process.env.KISMET_PORT, 10),
-      username: process.env.KISMET_USERNAME,
-      password: process.env.KISMET_PASSWORD,
+      host: process.env.KISMET_HOST!,
+      port: parseInt(process.env.KISMET_PORT!, 10),
+      username: process.env.KISMET_USERNAME!,
+      password: process.env.KISMET_PASSWORD!,
     },
     email: {
-      host: process.env.EMAIL_HOST,
-      port: parseInt(process.env.EMAIL_PORT, 10),
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-      from: process.env.EMAIL_FROM,
-      to: process.env.EMAIL_TO,
+      host: process.env.EMAIL_HOST!,
+      port: parseInt(process.env.EMAIL_PORT!, 10),
+      user: process.env.EMAIL_USER!,
+      pass: process.env.EMAIL_PASS!,
+      from: process.env.EMAIL_FROM!,
+      to: process.env.EMAIL_TO!,
     },
   };
 }

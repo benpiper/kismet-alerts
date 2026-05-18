@@ -1,17 +1,5 @@
-/**
- * WebSocket connection manager with automatic reconnection and exponential backoff.
- *
- * Features:
- * - Automatic reconnection on unexpected close
- * - Exponential backoff: 1s initial, 60s max, 2x multiplier
- * - Jitter: ±20% randomization on delays
- * - Max 10 consecutive failures before exit
- * - Failure counter resets on successful connection
- * - Sends email notification before giving up
- */
-
 import WebSocket from 'ws';
-import { logger } from './logger.js';
+import { logger } from './logger.ts';
 
 const INITIAL_DELAY_MS = 1000;
 const MAX_DELAY_MS = 60000;
@@ -19,7 +7,15 @@ const BACKOFF_MULTIPLIER = 2;
 const MAX_FAILURES = 10;
 const JITTER_FACTOR = 0.2; // ±20%
 
-function calculateDelay(attemptNumber) {
+type OnMessageHandler = (event: WebSocket.MessageEvent) => void;
+type OnReadyHandler = (ws: WebSocket) => void;
+
+interface WebSocketManager {
+  close: () => void;
+  getWebSocket: () => WebSocket | null;
+}
+
+function calculateDelay(attemptNumber: number): number {
   let delay = INITIAL_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attemptNumber);
   delay = Math.min(delay, MAX_DELAY_MS);
 
@@ -31,47 +27,51 @@ function calculateDelay(attemptNumber) {
   return Math.max(INITIAL_DELAY_MS, Math.round(delay));
 }
 
-export function createWebSocketConnection(url, onMessage, onReady) {
+export function createWebSocketConnection(
+  url: string,
+  onMessage?: OnMessageHandler,
+  onReady?: OnReadyHandler
+): WebSocketManager {
   let failureCount = 0;
   let reconnectAttempt = 0;
-  let ws = null;
+  let ws: WebSocket | null = null;
   let isIntentionallyClosed = false;
 
-  function connect() {
+  function connect(): void {
     try {
       logger.info('Creating WebSocket connection', { url, attempt: reconnectAttempt + 1 });
       ws = new WebSocket(url);
 
-      ws.onopen = (event) => {
+      ws.onopen = () => {
         logger.info('WebSocket connection established');
         failureCount = 0;
         reconnectAttempt = 0;
-        if (onReady) {
+        if (onReady && ws) {
           onReady(ws);
         }
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = (event: WebSocket.MessageEvent) => {
         if (onMessage) {
           try {
             onMessage(event);
           } catch (err) {
+            const error = err as Error;
             logger.error('Error processing WebSocket message', {
-              error: err.message,
-              stack: err.stack,
+              error: error.message,
+              stack: error.stack,
             });
           }
         }
       };
 
-      ws.onerror = (event) => {
+      ws.onerror = (event: WebSocket.ErrorEvent) => {
         logger.error('WebSocket error', {
-          code: event.code,
-          reason: event.reason,
+          message: (event as any).message || 'Unknown error',
         });
       };
 
-      ws.onclose = (event) => {
+      ws.onclose = (event: WebSocket.CloseEvent) => {
         if (isIntentionallyClosed) {
           logger.info('WebSocket closed intentionally');
           return;
@@ -90,7 +90,7 @@ export function createWebSocketConnection(url, onMessage, onReady) {
             attempts: failureCount,
           });
           // Signal to parent that we've given up
-          process.emit('websocket-fatal-error', new Error('Max reconnection attempts reached'));
+          process.emit('websocket-fatal-error' as unknown as any, new Error('Max reconnection attempts reached'));
           return;
         }
 
@@ -107,15 +107,16 @@ export function createWebSocketConnection(url, onMessage, onReady) {
         }, delay);
       };
     } catch (err) {
+      const error = err as Error;
       logger.error('Failed to create WebSocket connection', {
-        error: err.message,
+        error: error.message,
         attempt: reconnectAttempt + 1,
       });
 
       failureCount++;
       if (failureCount >= MAX_FAILURES) {
         logger.error('Max connection attempts reached', { attempts: failureCount });
-        process.emit('websocket-fatal-error', err);
+        process.emit('websocket-fatal-error' as unknown as any, error);
         return;
       }
 
