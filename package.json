@@ -4,7 +4,9 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@acidemic/axios-digest-auth": "^0.9.9",
     "audic": "^3.0.2",
+    "axios": "^1.16.1",
     "dotenv": "^17.2.2",
     "moment": "^2.30.1",
     "nodemailer": "^7.0.5",

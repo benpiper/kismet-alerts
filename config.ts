@@ -14,9 +14,17 @@ export interface EmailConfig {
   to: string;
 }
 
+export interface NvrConfig {
+  ip: string;
+  username: string;
+  password: string;
+  snapshotChannels: number[];
+}
+
 export interface AppConfig {
   kismet: KismetConfig;
   email: EmailConfig;
+  nvr?: NvrConfig;
 }
 
 export function validateConfig(): AppConfig {
@@ -67,6 +75,30 @@ export function validateConfig(): AppConfig {
     throw new Error(errorMessage);
   }
 
+  let nvrConfig: NvrConfig | undefined;
+  if (process.env.NVR_IP) {
+    if (!process.env.NVR_USERNAME || !process.env.NVR_PASSWORD) {
+      throw new Error('Configuration validation failed:\n  - Missing required NVR_USERNAME or NVR_PASSWORD since NVR_IP is provided');
+    }
+
+    let snapshotChannels: number[] = [101];
+    if (process.env.NVR_SNAPSHOT_CHANNELS) {
+      const parsed = process.env.NVR_SNAPSHOT_CHANNELS.split(',')
+        .map(ch => parseInt(ch.trim(), 10));
+      if (parsed.some(isNaN)) {
+        throw new Error(`Configuration validation failed:\n  - Invalid format for NVR_SNAPSHOT_CHANNELS: ${process.env.NVR_SNAPSHOT_CHANNELS} (must be a comma-separated list of integers)`);
+      }
+      snapshotChannels = parsed;
+    }
+
+    nvrConfig = {
+      ip: process.env.NVR_IP,
+      username: process.env.NVR_USERNAME,
+      password: process.env.NVR_PASSWORD,
+      snapshotChannels,
+    };
+  }
+
   return {
     kismet: {
       host: process.env.KISMET_HOST!,
@@ -82,5 +114,6 @@ export function validateConfig(): AppConfig {
       from: process.env.EMAIL_FROM!,
       to: process.env.EMAIL_TO!,
     },
+    nvr: nvrConfig,
   };
 }

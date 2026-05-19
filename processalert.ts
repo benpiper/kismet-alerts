@@ -1,6 +1,7 @@
 import { sendMailWithRetry } from "./mail.ts";
 import { macMessageMappings, type MacMessageMapping } from "./macmessagemappings.ts";
 import { logger } from "./logger.ts";
+import { getNvrSnapshots } from "./nvr.ts";
 
 const MAX_ALERT_HISTORY_SIZE = 100;
 const MAX_ALERT_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -119,7 +120,12 @@ function getLostCooldown(mapping: MacMessageMapping): number {
   return mapping.lostTimerMs ?? DEVICE_LOST_COOLDOWN_MS;
 }
 
-async function sendFoundAlert(state: DeviceState, channel: string): Promise<void> {
+async function sendFoundAlert(
+  state: DeviceState,
+  channel: string,
+  triggerNvr: boolean,
+  nvrChannels?: number[]
+): Promise<void> {
   const timestampMs = Date.now();
 
   alertHistory.push({
@@ -138,10 +144,22 @@ async function sendFoundAlert(state: DeviceState, channel: string): Promise<void
     channel,
   });
 
+  let snapshots: any[] = [];
+  if (triggerNvr || (nvrChannels && nvrChannels.length > 0)) {
+    try {
+      snapshots = await getNvrSnapshots(nvrChannels);
+    } catch (err: any) {
+      logger.error("Error retrieving NVR snapshots for found alert email", {
+        error: err.message,
+      });
+    }
+  }
+
   await sendMailWithRetry(
     {},
     `Alert: ${state.message} on channel ${channel}`,
-    formatAlertHistory()
+    formatAlertHistory(),
+    snapshots
   );
 
   state.lastFoundEmailTimeMs = timestampMs;
@@ -246,7 +264,12 @@ export async function processAlert(json: KismetAlert): Promise<void> {
         const canSendFoundAlert = timeSinceLastFoundEmail >= foundCooldownMs;
 
         if (canSendFoundAlert) {
-          await sendFoundAlert(state, channel);
+          await sendFoundAlert(
+            state,
+            channel,
+            !!macMessageMapping.triggerNvr,
+            macMessageMapping.nvrChannels
+          );
 
           logger.info("Sent found alert", {
             mac: state.mac,

@@ -1,3 +1,6 @@
 .env
 macmessagemappings.ts
 node_modules
+*.jpg
+*.mp3
+*.png
